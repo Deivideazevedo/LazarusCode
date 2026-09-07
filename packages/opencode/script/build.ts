@@ -7,9 +7,30 @@ import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+import fs from "fs"
+
 const dir = path.resolve(__dirname, "..")
 
 process.chdir(dir)
+
+const rootEnvFile = path.resolve(dir, "../../.env")
+if (fs.existsSync(rootEnvFile)) {
+  const content = fs.readFileSync(rootEnvFile, "utf-8")
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const eqIdx = trimmed.indexOf("=")
+    if (eqIdx === -1) continue
+    const key = trimmed.slice(0, eqIdx).trim()
+    let val = trimmed.slice(eqIdx + 1).trim()
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1)
+    }
+    if (key && !process.env[key]) {
+      process.env[key] = val
+    }
+  }
+}
 
 const generated = await import("./generate.ts")
 
@@ -203,6 +224,10 @@ for (const item of targets) {
       OPENCODE_CHANNEL: `'${Script.channel}'`,
       OPENCODE_LIBC: item.os === "linux" ? `'${item.abi ?? "glibc"}'` : "",
       ...(item.os === "linux" ? { "process.env.OPENTUI_LIBC": JSON.stringify(item.abi ?? "glibc") } : {}),
+      "process.env.EMBEDDED_OMNIROUTE_KEY": JSON.stringify(process.env.OMNIROUTE_API_KEY || ""),
+      "process.env.EMBEDDED_OMNIROUTE_URL": JSON.stringify(
+        process.env.OMNIROUTE_BASE_URL || "http://omniroute.local/v1",
+      ),
     },
   })
 

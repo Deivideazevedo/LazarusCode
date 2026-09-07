@@ -686,12 +686,22 @@ export async function resolveOmniRouteRuntimeAuth(
       break
     }
   }
-  const apiKey = entry?.key ?? ""
+  const envKey =
+    process.env.OMNIROUTE_API_KEY ||
+    process.env.OPENCODE_OMNIROUTE_KEY ||
+    process.env.EMBEDDED_OMNIROUTE_KEY ||
+    ""
+  const apiKey = entry?.key || envKey
   if (!apiKey) return null
 
   const authBaseURL =
     entry && typeof (entry as { baseURL?: unknown }).baseURL === "string" ? (entry as { baseURL: string }).baseURL : ""
-  const baseURL = resolved.baseURL ?? (authBaseURL || "")
+  const envBaseURL =
+    process.env.OMNIROUTE_BASE_URL ||
+    process.env.OPENCODE_OMNIROUTE_URL ||
+    process.env.EMBEDDED_OMNIROUTE_URL ||
+    ""
+  const baseURL = resolved.baseURL ?? (authBaseURL || "") ?? envBaseURL
   if (!baseURL) return null
   const managementReadToken = resolved.managementReadToken ?? apiKey
   return { apiKey, baseURL, managementReadToken }
@@ -4595,6 +4605,19 @@ export function buildStaticProviderEntry(
     }
   }
 
+  if (Object.keys(models).length === 0) {
+    models["auto/coding"] = {
+      name: "Auto Coding (OmniRoute)",
+      tool_call: true,
+      reasoning: true,
+    }
+    models["auto"] = {
+      name: "Auto (OmniRoute)",
+      tool_call: true,
+      reasoning: true,
+    }
+  }
+
   return {
     npm: "@ai-sdk/openai-compatible",
     name: opts.displayName,
@@ -5182,7 +5205,12 @@ export function createOmniRouteConfigHook(
         break
       }
     }
-    const apiKey = entry?.type === "api" && typeof entry.key === "string" ? entry.key : ""
+    const envKey =
+      process.env.OMNIROUTE_API_KEY ||
+      process.env.OPENCODE_OMNIROUTE_KEY ||
+      process.env.EMBEDDED_OMNIROUTE_KEY ||
+      ""
+    const apiKey = (entry?.type === "api" && typeof entry.key === "string" ? entry.key : "") || envKey
 
     if (!apiKey) {
       // (c) no apiKey — silent no-op (with debug breadcrumb). The operator
@@ -5199,7 +5227,12 @@ export function createOmniRouteConfigHook(
     // No silent localhost default — a misconfigured plugin should surface a
     // breadcrumb and skip, not phantom requests.
     const storedBaseURL = entry && typeof entry.baseURL === "string" ? entry.baseURL : undefined
-    const baseURL = resolved.baseURL ?? storedBaseURL ?? ""
+    const envBaseURL =
+      process.env.OMNIROUTE_BASE_URL ||
+      process.env.OPENCODE_OMNIROUTE_URL ||
+      process.env.EMBEDDED_OMNIROUTE_URL ||
+      ""
+    const baseURL = resolved.baseURL ?? storedBaseURL ?? (envBaseURL || "")
     if (!baseURL) {
       logAt("debug", `config shim skipped: no baseURL for providerId=${resolved.providerId}`)
       return
@@ -5264,11 +5297,13 @@ export function createOmniRouteConfigHook(
         let localRawCompressionCombos: OmniRouteCompressionCombo[] = []
         let localRawConnections: OmniRouteProviderConnection[] = []
 
+        const startupTimeout = Number(process.env.OMNIROUTE_TIMEOUT_MS) || 3_000
+
         // Each wrapper keeps the existing try/catch, default value, and
         // exact warn message so per-endpoint fallbacks are preserved.
         const doModels = async (): Promise<void> => {
           try {
-            localRawModels = await fetcher(baseURL, apiKey, 30_000)
+            localRawModels = await fetcher(baseURL, apiKey, startupTimeout)
           } catch (err) {
             logAt(
               "error",
@@ -5281,7 +5316,7 @@ export function createOmniRouteConfigHook(
 
         const doCombos = async (): Promise<void> => {
           try {
-            localRawCombos = await combosFetcher(baseURL, managementReadToken, 10_000)
+            localRawCombos = await combosFetcher(baseURL, managementReadToken, startupTimeout)
           } catch (err) {
             logAt(
               "error",
@@ -5293,7 +5328,7 @@ export function createOmniRouteConfigHook(
         const doAutoCombos = async (): Promise<void> => {
           if (!wantAutoCombos) return
           try {
-            localRawAutoCombos = await autoCombosFetcher(baseURL, managementReadToken, 5_000, logger)
+            localRawAutoCombos = await autoCombosFetcher(baseURL, managementReadToken, startupTimeout, logger)
           } catch {
             // Already handled inside the default fetcher
           }
@@ -5302,7 +5337,7 @@ export function createOmniRouteConfigHook(
         const doEnrichment = async (): Promise<void> => {
           if (!wantEnrichment) return
           try {
-            localRawEnrichment = await enrichmentFetcher(baseURL, managementReadToken, 10_000)
+            localRawEnrichment = await enrichmentFetcher(baseURL, managementReadToken, startupTimeout)
           } catch (err) {
             logAt(
               "error",
@@ -5314,7 +5349,7 @@ export function createOmniRouteConfigHook(
         const doCompression = async (): Promise<void> => {
           if (!wantCompressionMeta) return
           try {
-            localRawCompressionCombos = await compressionMetaFetcher(baseURL, managementReadToken, 10_000)
+            localRawCompressionCombos = await compressionMetaFetcher(baseURL, managementReadToken, startupTimeout)
           } catch (err) {
             logAt(
               "error",
@@ -5326,7 +5361,7 @@ export function createOmniRouteConfigHook(
         const doConnections = async (): Promise<void> => {
           if (!wantUsableOnly) return
           try {
-            localRawConnections = await providersFetcher(baseURL, managementReadToken, 10_000)
+            localRawConnections = await providersFetcher(baseURL, managementReadToken, startupTimeout)
           } catch (err) {
             logAt(
               "error",
@@ -5467,41 +5502,20 @@ export function createOmniRouteConfigHook(
           _inflightRefresh.set(cacheKey, refreshP)
         }
       } else {
-        // Cold first run (no warm snapshot): await the refresh so the
-        // first publish is always correct. In-flight guard still applies.
+        // Cold first run (no warm snapshot): run refresh in background so startup is never blocked
         const existing = _inflightRefresh.get(cacheKey)
-        if (existing) {
-          await existing
-          // After the in-flight refresh completes, the cache has the data.
-          const fresh = cache.get(cacheKey)
-          if (fresh) {
-            rawModels = fresh.rawModels
-            rawCombos = fresh.rawCombos
-            rawAutoCombos = fresh.rawAutoCombos
-            rawEnrichment = fresh.rawEnrichment
-            rawCompressionCombos = fresh.rawCompressionCombos
-            rawConnections = fresh.rawConnections
-          }
-        } else {
+        if (!existing) {
           const refreshP = doRefresh()
             .catch((err: unknown) => {
-              logAt("error", `config shim: refresh failed: ${err instanceof Error ? err.message : String(err)}`)
+              logAt(
+                "error",
+                `config shim: background refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+              )
             })
             .finally(() => {
               _inflightRefresh.delete(cacheKey)
             })
           _inflightRefresh.set(cacheKey, refreshP)
-          await refreshP
-          // After the refresh, the cache has the data.
-          const fresh = cache.get(cacheKey)
-          if (fresh) {
-            rawModels = fresh.rawModels
-            rawCombos = fresh.rawCombos
-            rawAutoCombos = fresh.rawAutoCombos
-            rawEnrichment = fresh.rawEnrichment
-            rawCompressionCombos = fresh.rawCompressionCombos
-            rawConnections = fresh.rawConnections
-          }
         }
       }
     }
