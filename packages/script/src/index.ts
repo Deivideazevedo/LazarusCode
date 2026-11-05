@@ -26,7 +26,7 @@ const env = {
 const CHANNEL = env.OPENCODE_CHANNEL ?? "latest"
 const IS_PREVIEW = false
 
-const VERSION = env.OPENCODE_VERSION ?? "1.0.0"
+const VERSION = env.OPENCODE_VERSION ?? "1.19.5"
 
 const bot = ["actions-user", "opencode", "opencode-agent[bot]"]
 const teamPath = path.resolve(import.meta.dir, "../../../.github/TEAM_MEMBERS")

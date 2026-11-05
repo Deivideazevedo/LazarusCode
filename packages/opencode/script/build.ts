@@ -197,7 +197,7 @@ for (const item of targets) {
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
       outfile: `dist/${name}/bin/lazaruscode`,
-      execArgv: [`--user-agent=lazaruscode/${Script.version}`, "--use-system-ca", "--"],
+      execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
       windows: {
         icon: path.resolve(dir, "assets/Logo.ico"),
         title: "LazarusCode",
